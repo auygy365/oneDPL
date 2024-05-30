@@ -87,8 +87,6 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
     // run scan kernels for all input blocks in the current buffer
     // e.g., scan length 2^24 / MAX_INPUTS_PER_BLOCK = 2 blocks 
     for ( int b=0; b<numBlocks; b++ ) {
-    int offset = 0; // TODO remove
-
     // the first kernel computes thread-local prefix scans and 
     // thread local carries, one per thread
     // intermediate partial sums and carries write back to the output buffer
@@ -96,28 +94,20 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
     //auto src = bInputData.template get_access<access::mode::read>(h);
     //auto dst = bOutputData.template get_access<access::mode::read_write>(h);
     h.parallel_for( range, [=](nd_item<1> ndi) SYCL_ESIMD_KERNEL {
-        //auto offset = j * M * sizeof(uint32_t);
         slm_init<1024>();
         auto id = ndi.get_global_id(0);
         auto lid = ndi.get_local_id(0);
         auto g = ndi.get_group(0);
-        auto addr = id * K * sizeof(ValueType) + offset + (b*blockSize*sizeof(ValueType));
-        // N.B. select() operator is broken for uint_32t, replace everywhere with uint
+        auto addr = sizeof(ValueType) * (id * K + b*blockSize);
+        constexpr uint32_t stride = VL*sizeof(ValueType);
         simd<ValueType,VL> c, t, v, z;
         z = c = t = 0;
         // compute thread-local pfix on T0..63, K samples/T, send to accumulator kernel
         #pragma unroll
         for ( int j=0; j<J; j++ ) {
-        #if 0
-        v.copy_from(first,addr);
-        #else
-	// We use reinterpret casting to get around pointer arithmetic jumping by the size of the
-	// underlying type instead of individual bytes. The buffer accessor ESIMD call requires an offset in bytes.
-	// During productization this should be better handled.
-        v.copy_from(reinterpret_cast<ValueType*>(reinterpret_cast<uint8_t*>(first) + addr));
-        #endif
+        v = block_load<ValueType, VL>(first, addr);
         prefix_sum( v, c, z, t );
-        addr += (VL*sizeof(ValueType));
+        addr += stride;
         }
 
         // store T local carry outs (T0..63) to slm
@@ -130,23 +120,15 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         // accumulator kernel takes M thread carries from scratch
         // to compute a prefix sum on global carries
         if ( lid == 0 ) {
-        #if 0
-        addr = (M + g*NUM_THREADS_LOCAL) * sizeof(uint) + offset;
-        #else
-        addr = (g*NUM_THREADS_LOCAL) * sizeof(ValueType) + offset;
-        #endif
+        addr = (g*NUM_THREADS_LOCAL) * sizeof(ValueType);
         c = z; 
         #pragma unroll
         for( int i=0; i<2; i++ ) {
             v = slm_block_load<ValueType,VL>(caddr);
-            caddr += (VL*sizeof(ValueType));
+            caddr += stride;
             prefix_sum( v, c, z, t );
-            #if 0
-            v.copy_to(dst,addr);
-            #else
-            v.copy_to(reinterpret_cast<ValueType*>(reinterpret_cast<uint8_t*>(tmp_storage) + addr));
-            #endif
-            addr += (VL*sizeof(ValueType));
+            block_store<ValueType, VL>(tmp_storage, addr, v);
+            addr += stride;
         }
         }
     });
@@ -168,16 +150,13 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         auto g = ndi.get_group(0);
         simd<ValueType,VL> v;
         ValueType carry31;
+        constexpr uint32_t stride = VL*sizeof(ValueType);
 
         // propogate carry in from previous block
         ValueType carry_in = 0;
         if (b > 0) {
-        #if 0
-        ci = scalar_load<uint>(result,offset+(b*blockSize-1)*sizeof(uint32_t));
-        #else
         // No scalar_load pointer API. Use a gather with a constant offset
-        carry_in = gather<ValueType, 1>(result, simd<uint32_t, 1>(offset+(b*blockSize-1)*sizeof(ValueType)))[0];
-        #endif
+        carry_in = gather<ValueType, 1>(result, simd<uint32_t, 1>((b*blockSize-1)*sizeof(ValueType)))[0];
         }
 
         // on each Xe T0: 
@@ -195,17 +174,11 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         //         on 64 T-local carries 
         //            0: T0 carry, 1: T0 + T1 carry, 2: T0 + T1 + T2 carry, ...
         //           63: sum(T0 carry...T63 carry)
-        //auto csrc = (M + g*NUM_THREADS_LOCAL) * sizeof(uint) + offset;
-        auto csrc = (g*NUM_THREADS_LOCAL) * sizeof(ValueType) + offset;
+        auto csrc = (g*NUM_THREADS_LOCAL) * sizeof(ValueType);
         auto cdst = 0;
-        auto stride = VL*sizeof(ValueType);
         #pragma unroll
         for(int i=0;i<2;i++) {
-            #if 0
-            v.copy_from(result,csrc);
-            #else
-            v.copy_from(reinterpret_cast<ValueType*>(reinterpret_cast<uint8_t*>(tmp_storage) + csrc));
-            #endif
+            v = block_load<ValueType,VL>(tmp_storage, csrc);
             slm_block_store<ValueType,VL>(cdst,v);
             csrc += stride;
             cdst += stride;
@@ -214,9 +187,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         // step 2) load 32 or 64 Xe carry outs on every Xe; then
         //         compute the prefix to get global Xe carries
         //         v = gather(63, 127, 191, 255, ...)
-        //simd<uint,VL> addr((M+NUM_THREADS_LOCAL-1)*sizeof(uint),NUM_THREADS_LOCAL*sizeof(uint));
         simd<uint32_t,VL> addr((NUM_THREADS_LOCAL-1)*sizeof(ValueType),NUM_THREADS_LOCAL*sizeof(ValueType));
-        addr += offset;  
         simd<ValueType,VL> t, z, c;
         c = t = z = 0;
         #pragma unroll
@@ -247,7 +218,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         }
         t = slm_block_load<ValueType,VL>(caddr) + carry;
         slm_block_store<ValueType,VL>(caddr,t);
-        caddr += VL * sizeof(ValueType);
+        caddr += stride;
         t = slm_block_load<ValueType,VL>(caddr) + carry;
         slm_block_store<ValueType,VL>(caddr,t);
         slm_scalar_store<ValueType>(64*sizeof(ValueType),carry);
@@ -255,7 +226,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         __dpl_esimd::__ns::barrier();
 
         // get global carry adjusted for thread-local prefix
-        auto maddr = id * K * sizeof(ValueType) + offset + (b*blockSize*sizeof(ValueType));
+        auto maddr = sizeof(ValueType) * (id * K + b*blockSize);
         if ( lid > 0 ) {
         carry_in += slm_scalar_load<ValueType>((lid-1)*sizeof(ValueType));
         } else {
@@ -281,7 +252,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         prefix_sum( v, c, z, t );
         v += carry_in;
         block_store<ValueType,VL>(result, maddr, v);
-        maddr += (VL*sizeof(ValueType));
+        maddr += stride;
         }  
     });
     }).wait(); 
