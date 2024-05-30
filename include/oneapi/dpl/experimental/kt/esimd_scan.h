@@ -98,7 +98,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         auto id = ndi.get_global_id(0);
         auto lid = ndi.get_local_id(0);
         auto g = ndi.get_group(0);
-        auto addr = sizeof(ValueType) * (id * K + b*blockSize);
+        size_t addr = sizeof(ValueType) * (id * K + b*blockSize);
         constexpr uint32_t stride = VL*sizeof(ValueType);
         simd<ValueType,VL> c, t, v, z;
         z = c = t = 0;
@@ -226,7 +226,7 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         __dpl_esimd::__ns::barrier();
 
         // get global carry adjusted for thread-local prefix
-        auto maddr = sizeof(ValueType) * (id * K + b*blockSize);
+        size_t maddr = sizeof(ValueType) * (id * K + b*blockSize);
         if ( lid > 0 ) {
         carry_in += slm_scalar_load<ValueType>((lid-1)*sizeof(ValueType));
         } else {
