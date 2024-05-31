@@ -24,6 +24,7 @@
 #include <iterator>
 
 #include "internal/esimd_defs.h"
+#include "../../pstl/utils.h"
 
 
 #define prefix_sum( v, c, z, t ) \
@@ -60,11 +61,14 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
     constexpr std::uint32_t MAX_INPUTS_PER_BLOCK = 16777216;   // empirically determined for reduce_then_scan
 
     int M = std::distance(first, last);
+    uint32_t num_remaining = M;
     auto mScanLength = M;
     // items per PVC hardware thread
-    int K = mScanLength >= MAX_INPUTS_PER_BLOCK ? MAX_INPUTS_PER_BLOCK / NUM_THREADS_GLOBAL : mScanLength / NUM_THREADS_GLOBAL;
+    // Always process at least 32 elements per thread (1 per lane) 
+    int K = mScanLength >= MAX_INPUTS_PER_BLOCK ? MAX_INPUTS_PER_BLOCK / NUM_THREADS_GLOBAL
+        : std::max(std::uint32_t(32), oneapi::dpl::__internal::__dpl_bit_ceil(num_remaining) / NUM_THREADS_GLOBAL);
     // SIMD vectors per PVC hardware thread
-    int J = K/VL;
+    int J = K / VL;
     int j;
 
     // block inputs according to slm capacity
@@ -76,7 +80,8 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
     // version will rely on blocking to fully utilize slm
     // for scan lengths less than 2^23 block size is reduced accordingly
     auto blockSize = ( M < MAX_INPUTS_PER_BLOCK ) ? M : MAX_INPUTS_PER_BLOCK;
-    auto numBlocks = M / blockSize;
+    auto numBlocks = M / blockSize + (M % blockSize != 0);
+    std::cout << "K: " << K << " J: " << J << " numBlocks: " << numBlocks << std::endl;
 
     auto globalRange = range<1>(NUM_THREADS_GLOBAL);
     auto localRange = range<1>(NUM_THREADS_LOCAL);
@@ -98,16 +103,34 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         auto id = ndi.get_global_id(0);
         auto lid = ndi.get_local_id(0);
         auto g = ndi.get_group(0);
-        size_t addr = sizeof(ValueType) * (id * K + b*blockSize);
         constexpr uint32_t stride = VL*sizeof(ValueType);
+        size_t addr = sizeof(ValueType) * (id * K + b*blockSize);
+        size_t end_addr = sizeof(ValueType) * M;
+        bool is_full_thread = addr + sizeof(ValueType) * J <= end_addr;
         simd<ValueType,VL> c, t, v, z;
         z = c = t = 0;
         // compute thread-local pfix on T0..63, K samples/T, send to accumulator kernel
-        #pragma unroll
-        for ( int j=0; j<J; j++ ) {
-        v = block_load<ValueType, VL>(first, addr);
-        prefix_sum( v, c, z, t );
-        addr += stride;
+        if (is_full_thread)
+        {
+            #pragma unroll
+            for ( int j=0; j<J; j++ ) {
+            v = block_load<ValueType, VL>(first, addr);
+            prefix_sum( v, c, z, t );
+            addr += stride;
+            }
+        }
+        else
+        {
+            #pragma unroll
+            for ( int j=0; j<J; j++ ) {
+            simd<uint32_t, VL> addr_offsets(addr, sizeof(ValueType));
+            simd_mask<VL> addr_in_range = addr_offsets < end_addr;
+            // Mask is of the form [1, 1, ..., 1, 0, 0, ..., 0]. Perform a gather on the 1s
+            // and pass-thru the identity element with 0s. 
+            v = gather<ValueType, VL>(first, addr_offsets, addr_in_range, z);
+            prefix_sum( v, c, z, t );
+            addr += stride;
+            }
         }
 
         // store T local carry outs (T0..63) to slm
@@ -226,7 +249,6 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         __dpl_esimd::__ns::barrier();
 
         // get global carry adjusted for thread-local prefix
-        size_t maddr = sizeof(ValueType) * (id * K + b*blockSize);
         if ( lid > 0 ) {
         carry_in += slm_scalar_load<ValueType>((lid-1)*sizeof(ValueType));
         } else {
@@ -244,19 +266,47 @@ void inclusive_scan(sycl::queue q, InputIterator first, InputIterator last, Outp
         // even through the data so far does not agree with the guidance but for simplicity
         // with variable scan lengths grouping is not used currently
         // grouping and prefetch are likely to improve throughput in future versions
+        size_t maddr = sizeof(ValueType) * (id * K + b*blockSize);
+        size_t end_addr = sizeof(ValueType) * M;
+        bool is_full_thread = maddr + sizeof(ValueType) * J <= end_addr;
         simd<ValueType,VL> t, z, c;
         c = t = z = 0;
-        #pragma unroll
-        for ( int j=0; j<J; j++ ) {
-        v = block_load<ValueType,VL>(first, maddr);
-        prefix_sum( v, c, z, t );
-        v += carry_in;
-        block_store<ValueType,VL>(result, maddr, v);
-        maddr += stride;
-        }  
+        if (is_full_thread)
+        {
+            #pragma unroll
+            for ( int j=0; j<J; j++ ) {
+            v = block_load<ValueType,VL>(first, maddr);
+            prefix_sum( v, c, z, t );
+            v += carry_in;
+            block_store<ValueType,VL>(result, maddr, v);
+            maddr += stride;
+            }
+        }
+        else
+        {
+            #pragma unroll
+            for ( int j=0; j<J; j++ ) {
+            simd<uint32_t, VL> maddr_offsets(maddr, sizeof(ValueType));
+            simd_mask<VL> maddr_in_range = maddr_offsets < end_addr;
+            // Pad all extra elements with the identity type
+            v = gather<ValueType, VL>(first, maddr_offsets, maddr_in_range, z);
+            prefix_sum( v, c, z, t );
+            v += carry_in;
+            scatter<ValueType,VL>(result, maddr_offsets, v, maddr_in_range);
+            maddr += stride;
+            }
+        }
     });
-    }).wait(); 
-
+    }).wait();
+    if (num_remaining > blockSize)
+    {
+        num_remaining -= blockSize;
+        // TODO: add support to invoke a single work-group implementation on either the last iteration
+        auto k_next = num_remaining >= MAX_INPUTS_PER_BLOCK ? MAX_INPUTS_PER_BLOCK / NUM_THREADS_GLOBAL 
+            : std::max(std::uint32_t(32), oneapi::dpl::__internal::__dpl_bit_ceil(num_remaining) / NUM_THREADS_GLOBAL);
+        // SIMD vectors per PVC hardware thread
+        J = k_next/VL;
+    }
     } // block
     sycl::free(tmp_storage, q);
 }
