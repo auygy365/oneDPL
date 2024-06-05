@@ -114,6 +114,8 @@ class __onesweep_memory_holder
         // TODO: handle a case when malloc_device fails to allocate the memory
         void* __mem = sycl::malloc_device(__m_raw_mem_bytes, __m_q);
         __m_raw_mem_ptr = reinterpret_cast<::std::uint8_t*>(__mem);
+        if (!__mem)
+            throw std::bad_alloc();
     }
 
     void
