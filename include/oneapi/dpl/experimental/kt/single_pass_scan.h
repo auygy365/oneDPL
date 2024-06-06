@@ -356,15 +356,38 @@ struct __lookback_kernel_func
         }
 
         auto __tile_vals_ptr = __dpl_sycl::__get_accessor_ptr(__tile_vals);
-        _Type __local_reduction =
-            sycl::joint_reduce(__group, __tile_vals_ptr, __tile_vals_ptr + __wg_local_memory_size, __binary_op);
+
+        sycl::joint_inclusive_scan(__group, __tile_vals_ptr, __tile_vals_ptr + __wg_local_memory_size, __tile_vals_ptr, __binary_op);
+        
+        _Type __local_reduction{};
+        if (__local_id == __workgroup_size - 1)
+            __local_reduction = __tile_vals[__wg_local_memory_size -1];
+      
         _Type __prev_tile_reduction{};
 
         __lookback_phase<_FlagType>(__group, __subgroup, __status_flags, __status_vals_full, __status_vals_partial,
                                     __tile_id, __local_reduction, __prev_tile_reduction, __binary_op);
 
-        sycl::joint_inclusive_scan(__group, __tile_vals_ptr, __tile_vals_ptr + __wg_local_memory_size, __out_begin,
-                                   __binary_op, __prev_tile_reduction);
+        if (__wg_next_offset <= __n)
+        {
+            _ONEDPL_PRAGMA_UNROLL
+            for (std::uint32_t __i = 0; __i < __data_per_workitem; ++__i)
+            {
+                __out_rng[__wg_current_offset + __local_id + __workgroup_size * __i] = __binary_op(__prev_tile_reduction, __tile_vals[__local_id + __workgroup_size * __i]);
+            }
+        }
+        else
+        {
+            _ONEDPL_PRAGMA_UNROLL
+            for (std::uint32_t __i = 0; __i < __data_per_workitem; ++__i)
+            {
+                if (__wg_current_offset + __local_id + __workgroup_size * __i < __n)
+                {
+                    __out_rng[__wg_current_offset + __local_id + __workgroup_size * __i] = __binary_op(__prev_tile_reduction, __tile_vals[__local_id + __workgroup_size * __i]);
+                }
+            }
+        }
+
     }
 };
 
