@@ -262,23 +262,23 @@ __lookback_phase(const _Group& __group, const _SubGroup& __subgroup, _StatusFlag
                  const _Type& __local_reduction, _Type& __prev_tile_reduction, _BinaryOp __binary_op)
 {
     // The last sub-group will query the previous tiles to find a prefix
-    if (__subgroup.get_group_id() == (__subgroup.get_group_range()[0] - 1))
+    if (__subgroup.get_group_id() == 0)
     {
         _FlagType __flag(__status_flags, __status_vals_full, __status_vals_partial, __tile_id);
 
-        if (__subgroup.get_local_id() == __subgroup.get_local_range()[0] - 1)
+        if (__subgroup.get_local_id() == 0)
         {
             __flag.set_partial(__local_reduction);
         }
 
         __prev_tile_reduction = __flag.cooperative_lookback(__subgroup, __binary_op);
 
-        if (__subgroup.get_local_id() == __subgroup.get_local_range()[0] - 1)
+        if (__subgroup.get_local_id() == 0)
         {
             __flag.set_full(__binary_op(__prev_tile_reduction, __local_reduction));
         }
     }
-    __prev_tile_reduction = sycl::group_broadcast(__group, __prev_tile_reduction, __group.get_local_range()[0] - 1);
+    __prev_tile_reduction = sycl::group_broadcast(__group, __prev_tile_reduction, 0);
 }
 
 template <std::uint16_t __data_per_workitem, std::uint16_t __workgroup_size, typename _Type, typename _FlagType,
