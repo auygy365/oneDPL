@@ -1012,12 +1012,12 @@ struct __early_exit_find_any
 {
     _Pred __pred;
 
-    template <typename _GroupID, typename _ItemID, typename _IterSize, typename _WgSize, typename... _Ranges>
+    template <typename _GroupID, typename _ItemID, typename _IterSize, typename _WgSize, typename _Range>
     bool
     operator()(const _GroupID __group_idx, const _ItemID __local_idx, const _IterSize __n_iter, const _WgSize __wg_size,
-               _Ranges&&... __rngs) const
+               _Range&& __rng) const
     {
-        const auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
+        const auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rng);
 
         std::size_t __shift = 16;
 
@@ -1033,7 +1033,7 @@ struct __early_exit_find_any
         {
             const auto __shifted_idx = __init_index + __i * __shift;
 
-            if (__shifted_idx < __n && __pred(__shifted_idx, __rngs...))
+            if (__shifted_idx < __n && __pred(__shifted_idx, __rng))
             {
                 return true;
             }
@@ -1047,18 +1047,18 @@ struct __early_exit_find_any
 // parallel_find_or - sync pattern
 //------------------------------------------------------------------------
 
-template <typename _ExecutionPolicy, typename _Brick, typename... _Ranges>
+template <typename _ExecutionPolicy, typename _Brick, typename _Range>
 bool
 __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPolicy&& __exec, _Brick __f,
-                   _Ranges&&... __rngs)
+                    _Range&& __rng)
 {
     using _CustomName = oneapi::dpl::__internal::__policy_kernel_name<_ExecutionPolicy>;
     using _AtomicType = typename __parallel_or_tag::_AtomicType;
     using _FindAnyKernel =
         oneapi::dpl::__par_backend_hetero::__internal::__kernel_name_generator<__find_any_kernel, _CustomName, _Brick,
-                                                                               _Ranges...>;
+                                                                               _Range>;
 
-    auto __rng_n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
+    auto __rng_n = oneapi::dpl::__ranges::__get_first_range_size(__rng);
     assert(__rng_n > 0);
 
     // TODO: find a way to generalize getting of reliable work-group size
@@ -1087,7 +1087,7 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
         // main parallel_for
         __exec.queue().submit([&](sycl::handler& __cgh) {
-            oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
+            oneapi::dpl::__ranges::__require_access(__cgh, __rng);
             auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
 
             __cgh.parallel_for_work_group<_FindAnyKernel>(
@@ -1105,7 +1105,7 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                         const std::size_t __local_idx = __item.get_local_id(0);
 
                         if (!__found_in_any_item_inside_group &&
-                            __pred(__group_idx, __local_idx, __n_iter, __wgroup_size, __rngs...))
+                            __pred(__group_idx, __local_idx, __n_iter, __wgroup_size, __rng))
                         {
                             __found_in_any_item_inside_group = true;
                         }
