@@ -654,16 +654,29 @@ __pattern_any_of(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _Iterator
     if (__first == __last)
         return false;
 
+    const auto __n = __last - __first;
+    const auto __portion = std::min(__n, decltype(__n)(1048576));
+
     using _Predicate = oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, _Pred>;
 
     auto __keep = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _Iterator>();
-    auto __buf = __keep(__first, __last);
 
-    return oneapi::dpl::__par_backend_hetero::__parallel_find_any(
-        _BackendTag{},
-        __par_backend_hetero::make_wrapped_policy<__par_backend_hetero::__or_policy_wrapper>(
-            std::forward<_ExecutionPolicy>(__exec)),
-        _Predicate{__pred}, __buf.all_view());
+    for (auto __p_first = __first; __p_first < __last; __p_first += __portion)
+    {
+        auto __p_last = __p_first + std::min(__portion, __last - __p_first);
+        auto __buf = __keep(__p_first, __p_last);
+
+        if (oneapi::dpl::__par_backend_hetero::__parallel_find_any(
+            _BackendTag{},
+            __par_backend_hetero::make_wrapped_policy<__par_backend_hetero::__or_policy_wrapper>(
+                std::forward<_ExecutionPolicy>(__exec)),
+            _Predicate{ __pred }, __buf.all_view()))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 //------------------------------------------------------------------------
