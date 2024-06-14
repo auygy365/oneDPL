@@ -1063,10 +1063,10 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
     // TODO: find a way to generalize getting of reliable work-group size
     auto __wgroup_size = oneapi::dpl::__internal::__max_work_group_size(__exec);
-//#if _ONEDPL_COMPILE_KERNEL
-//    auto __kernel = __internal::__kernel_compiler<_FindAnyKernel>::__compile(__exec);
-//    __wgroup_size = ::std::min(__wgroup_size, oneapi::dpl::__internal::__kernel_work_group_size(__exec, __kernel));
-//#endif
+#if _ONEDPL_COMPILE_KERNEL
+    auto __kernel = __internal::__kernel_compiler<_FindAnyKernel>::__compile(__exec);
+    __wgroup_size = ::std::min(__wgroup_size, oneapi::dpl::__internal::__kernel_work_group_size(__exec, __kernel));
+#endif
     auto __max_cu = oneapi::dpl::__internal::__max_compute_units(__exec);
 
     auto __n_groups = (__rng_n - 1) / __wgroup_size + 1;
@@ -1090,13 +1090,12 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
             auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
 
-            using _LocalAccessorDataType = bool;
-            __dpl_sycl::__local_accessor<_LocalAccessorDataType> __lacc(sycl::range<1>{__wgroup_size}, __cgh);
-
             __cgh.parallel_for_work_group<_FindAnyKernel>(
                 sycl::range</*dim=*/1>(__n_groups),    // Number of work groups
                 sycl::range</*dim=*/1>(__wgroup_size), // The size of each work group
                 [=](sycl::group</*dim=*/1> __group) {
+
+                    bool __found_in_any_item_inside_group = false;
 
                     const std::size_t __group_idx = __group.get_group_id(0);
 
@@ -1105,19 +1104,18 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                         const std::size_t __local_idx = __item.get_local_id(0);
 
-                        __lacc[__local_idx] = __pred(__group_idx, __local_idx, __n_iter, __wgroup_size, __rngs...);
+                        if (!__found_in_any_item_inside_group &&
+                            __pred(__group_idx, __local_idx, __n_iter, __wgroup_size, __rngs...))
+                        {
+                            __found_in_any_item_inside_group = true;
+                        }
                     });
 
-                    auto __ptr = __dpl_sycl::__get_accessor_ptr(__lacc);
-                    __scan_work_group<_LocalAccessorDataType, /*_Inclusive*/ true>(
-                        __group, __ptr, __ptr + __wgroup_size, __ptr, sycl::logical_or<_LocalAccessorDataType>(),
-                        unseq_backend::__no_init_value<_LocalAccessorDataType>{});
-
-                    if (*__ptr)
+                    if (__found_in_any_item_inside_group)
                     {
                         __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
                             *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
-                    
+
                         __found.store(1);
                     }
                 });

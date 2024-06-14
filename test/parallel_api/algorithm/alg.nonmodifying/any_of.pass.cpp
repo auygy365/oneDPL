@@ -94,19 +94,11 @@ struct test_non_const
 int
 main()
 {
-    try
-    {
-        test<std::int32_t>(8 * sizeof(std::int32_t));
-        test<std::uint16_t>(8 * sizeof(std::uint16_t));
-        test<float64_t>(53);
-        test<bool>(1);
-        test_algo_basic_single<std::int32_t>(run_for_rnd_fw<test_non_const>());
-    }
-    catch (const std::exception& exc)
-    {
-        std::cerr << "Unexpected exception has been caught: " << exc.what() << ::std::endl;
-        return EXIT_FAILURE;
-    }
+    test<std::int32_t>(8 * sizeof(std::int32_t));
+    test<std::uint16_t>(8 * sizeof(std::uint16_t));
+    test<float64_t>(53);
+    test<bool>(1);
+    test_algo_basic_single<std::int32_t>(run_for_rnd_fw<test_non_const>());
 
     return done();
 }
