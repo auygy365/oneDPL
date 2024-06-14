@@ -655,7 +655,7 @@ __pattern_any_of(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _Iterator
         return false;
 
     const auto __n = __last - __first;
-    const auto __portion = std::min(__n, decltype(__n)(1048576 * 4));
+    const auto __portion = std::min(__n, decltype(__n)(1048576 * 2));
 
     using _Predicate = oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, _Pred>;
 
