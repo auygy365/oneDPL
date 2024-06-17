@@ -1075,8 +1075,10 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
     {
         sycl::buffer<_AtomicType, 1> __result_buf(&__result, 1); // temporary storage for global atomic
 
+        sycl::event __e_prev = {};
+
         const _RngSize __rng_portion_size = std::min(__rng_n, _RngSize(__n_groups * __wgroup_size));
-        for (_RngSize __processed_items_count = 0; __processed_items_count < __rng_n;
+        for (_RngSize __processed_items_count = 0; __processed_items_count < __rng_n && __result == 0;
              __processed_items_count += __rng_portion_size)
         {
             // take_view_simple, drop_view_simple
@@ -1084,7 +1086,11 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
             auto __rng_portion = oneapi::dpl::__ranges::take_view_simple(__rng_not_processed, std::min(__rng_not_processed.size(), __rng_portion_size));
 
             // main parallel_for
-            __exec.queue().submit([&](sycl::handler& __cgh) {
+            __e_prev = __exec.queue().submit([&, __e_prev](sycl::handler& __cgh) {
+
+                if (__e_prev != sycl::event{})
+                    __cgh.depends_on(__e_prev);
+
                 oneapi::dpl::__ranges::__require_access(__cgh, __rng_portion);
                 auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
 
@@ -1092,34 +1098,38 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                     sycl::range</*dim=*/1>(__n_groups),    // Number of work groups
                     sycl::range</*dim=*/1>(__wgroup_size), // The size of each work group
                     [=](sycl::group</*dim=*/1> __group) {
-                        bool __found_in_any_item_inside_group = false;
 
-                        const std::size_t __group_idx = __group.get_group_id(0);
+                        __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
+                            *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
 
-                        // process all work-items in our group
-                        __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
-                            const std::size_t __local_idx = __item.get_local_id(0);
-
-                            if (!__found_in_any_item_inside_group &&
-                                __pred(__group_idx, __local_idx, __wgroup_size, __rng_portion))
-                            {
-                                __found_in_any_item_inside_group = true;
-                            }
-                        });
-
-                        if (__found_in_any_item_inside_group)
+                        if (__found.load() == 0)
                         {
-                            __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
-                                *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
+                            bool __found_in_any_item_inside_group = false;
 
-                            __found.store(1);
+                            const std::size_t __group_idx = __group.get_group_id(0);
+
+                            // process all work-items in our group
+                            __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
+                                const std::size_t __local_idx = __item.get_local_id(0);
+
+                                if (!__found_in_any_item_inside_group &&
+                                    __pred(__group_idx, __local_idx, __wgroup_size, __rng_portion))
+                                {
+                                    __found_in_any_item_inside_group = true;
+                                }
+                            });
+
+                            if (__found_in_any_item_inside_group)
+                            {
+                                __found.store(1);
+                            }
                         }
                     });
-            }).wait();
-
-            if (__result != 0)
-                break;
+            });
         }
+
+        __e_prev.wait();
+
         //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
     }
 
