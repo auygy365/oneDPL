@@ -1071,17 +1071,17 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
     const oneapi::dpl::__par_backend_hetero::__early_exit_find_any<_ExecutionPolicy, _Brick> __pred{__f};
 
-    const _RngSize __rng_portion_size = std::min(__rng_n, _RngSize(__n_groups * __wgroup_size));
-    for (_RngSize __processed_items_count = 0; __processed_items_count < __rng_n;
-         __processed_items_count += __rng_portion_size)
+    // scope is to copy data back to __result after destruction of temporary sycl:buffer
     {
-        // take_view_simple, drop_view_simple
-        auto __rng_not_processed = oneapi::dpl::__ranges::drop_view_simple(__rng, __processed_items_count);
-        auto __rng_portion = oneapi::dpl::__ranges::take_view_simple(__rng_not_processed, std::min(__rng_not_processed.size(), __rng_portion_size));
+        sycl::buffer<_AtomicType, 1> __result_buf(&__result, 1); // temporary storage for global atomic
 
-        // scope is to copy data back to __result after destruction of temporary sycl:buffer
+        const _RngSize __rng_portion_size = std::min(__rng_n, _RngSize(__n_groups * __wgroup_size));
+        for (_RngSize __processed_items_count = 0; __processed_items_count < __rng_n;
+             __processed_items_count += __rng_portion_size)
         {
-            sycl::buffer<_AtomicType, 1> __result_buf(&__result, 1); // temporary storage for global atomic
+            // take_view_simple, drop_view_simple
+            auto __rng_not_processed = oneapi::dpl::__ranges::drop_view_simple(__rng, __processed_items_count);
+            auto __rng_portion = oneapi::dpl::__ranges::take_view_simple(__rng_not_processed, std::min(__rng_not_processed.size(), __rng_portion_size));
 
             // main parallel_for
             __exec.queue().submit([&](sycl::handler& __cgh) {
@@ -1115,12 +1115,12 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                             __found.store(1);
                         }
                     });
-            });
-            //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
-        }
+            }).wait();
 
-        if (__result != 0)
-            break;
+            if (__result != 0)
+                break;
+        }
+        //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
     }
 
     return __result != 0;
