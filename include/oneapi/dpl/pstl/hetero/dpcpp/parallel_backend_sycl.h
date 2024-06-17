@@ -1105,7 +1105,6 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
                         *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
-                    _AtomicType __found_local = 0;
 
                     if (__pred(__item_id, __n_iter, __wgroup_size, __rngs...))
                         __found.store(1);
