@@ -1099,27 +1099,25 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                     sycl::range</*dim=*/1>(__wgroup_size), // The size of each work group
                     [=](sycl::group</*dim=*/1> __group) {
 
-                        __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
-                            *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
+                        bool __found_in_any_item_inside_group = false;
 
-                        if (__found.load() == 0)
+                        const std::size_t __group_idx = __group.get_group_id(0);
+
+                        // process all work-items in our group
+                        __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
+                            const std::size_t __local_idx = __item.get_local_id(0);
+
+                            if (!__found_in_any_item_inside_group &&
+                                __pred(__group_idx, __local_idx, __wgroup_size, __rng_portion))
+                            {
+                                __found_in_any_item_inside_group = true;
+                            }
+                        });
+
+                        if (__found_in_any_item_inside_group)
                         {
-                            bool __found_in_any_item_inside_group = false;
-
-                            const std::size_t __group_idx = __group.get_group_id(0);
-
-                            // process all work-items in our group
-                            __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
-                                const std::size_t __local_idx = __item.get_local_id(0);
-
-                                if (!__found_in_any_item_inside_group &&
-                                    __pred(__group_idx, __local_idx, __wgroup_size, __rng_portion))
-                                {
-                                    __found_in_any_item_inside_group = true;
-                                }
-                            });
-
-                            if (__found_in_any_item_inside_group)
+                            __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space>
+                                __found(*__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
                             {
                                 __found.store(1);
                             }
