@@ -1091,8 +1091,6 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
             auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
 
-            // create local accessor to connect atomic with
-            __dpl_sycl::__local_accessor<_AtomicType> __temp_local(1, __cgh);
 #if _ONEDPL_COMPILE_KERNEL && _ONEDPL_KERNEL_BUNDLE_PRESENT
             __cgh.use_kernel_bundle(__kernel.get_kernel_bundle());
 #endif
@@ -1107,24 +1105,10 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
                         *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
-                    __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::local_space> __found_local(
-                        *__dpl_sycl::__get_accessor_ptr(__temp_local));
+                    _AtomicType __found_local = 0;
 
-                    // 1. Set initial value to local atomic
-                    if (__local_idx == 0)
-                        __found_local.store(0);
-                    __dpl_sycl::__group_barrier(__item_id);
-
-                    // Set found state result to global atomic
-                    if (__pred(__item_id, __n_iter, __wgroup_size, __rngs...) && !__found_local.load())
-                        __found_local.store(1);
-                    __dpl_sycl::__group_barrier(__item_id);
-
-                    // Set local atomic value to global atomic
-                    if (__local_idx == 0 && __found_local.load())
-                    {
+                    if (__pred(__item_id, __n_iter, __wgroup_size, __rngs...))
                         __found.store(1);
-                    }
                 });
         });
         //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
