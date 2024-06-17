@@ -1068,7 +1068,7 @@ struct __early_exit_find_or
             {
                 if constexpr (_OrTagType::value)
                 {
-                    __found_local.store(1);
+                    __found_local.fetch_or(1);
                     break;
                 }
                 else
@@ -1168,7 +1168,7 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
                     if (__local_idx == 0 && __comp(__found_local.load(), __found.load()))
                     {
                         if constexpr (__or_tag_check)
-                            __found.store(1);
+                            __found.fetch_or(1);
                         else
                         {
                             for (auto __old = __found.load(); __comp(__found_local.load(), __old);
