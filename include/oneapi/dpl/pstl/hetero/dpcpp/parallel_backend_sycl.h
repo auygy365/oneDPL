@@ -1012,10 +1012,9 @@ struct __early_exit_find_any
 {
     _Pred __pred;
 
-    template <typename _GroupID, typename _ItemID, typename _IterSize, typename _WgSize, typename _Range>
+    template <typename _GroupID, typename _ItemID, typename _WgSize, typename _Range>
     bool
-    operator()(const _GroupID __group_idx, const _ItemID __local_idx, const _IterSize __n_iter, const _WgSize __wg_size,
-               _Range&& __rng) const
+    operator()(const _GroupID __group_idx, const _ItemID __local_idx, const _WgSize __wg_size, _Range&& __rng) const
     {
         const auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rng);
 
@@ -1023,23 +1022,13 @@ struct __early_exit_find_any
 
         // each work_item processes N_ELEMENTS with step SHIFT
         const std::size_t __leader = (__local_idx / __shift) * __shift;
-        const std::size_t __init_index =
-            __group_idx * __wg_size * __n_iter + __leader * __n_iter + __local_idx % __shift;
+        const std::size_t __init_index = __group_idx * __wg_size + __leader + __local_idx % __shift;
 
         // if our "line" is out of work group size, reduce the line to the number of the rest elements
         if (__wg_size - __leader < __shift)
             __shift = __wg_size - __leader;
-        for (_IterSize __i = 0; __i < __n_iter; ++__i)
-        {
-            const auto __shifted_idx = __init_index + __i * __shift;
 
-            if (__shifted_idx < __n && __pred(__shifted_idx, __rng))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return __init_index < __n && __pred(__init_index, __rng);
     }
 };
 
@@ -1058,7 +1047,8 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
         oneapi::dpl::__par_backend_hetero::__internal::__kernel_name_generator<__find_any_kernel, _CustomName, _Brick,
                                                                                _Range>;
 
-    auto __rng_n = oneapi::dpl::__ranges::__get_first_range_size(__rng);
+    using _RngSize = decltype(__rng.size());
+    const _RngSize __rng_n = __rng.size();
     assert(__rng_n > 0);
 
     // TODO: find a way to generalize getting of reliable work-group size
@@ -1069,58 +1059,68 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 #endif
     auto __max_cu = oneapi::dpl::__internal::__max_compute_units(__exec);
 
-    auto __n_groups = (__rng_n - 1) / __wgroup_size + 1;
+    auto __n_groups = oneapi::dpl::__internal::__dpl_ceiling_div(__rng_n, __wgroup_size);
     // TODO: try to change __n_groups with another formula for more perfect load balancing
     __n_groups = ::std::min(__n_groups, decltype(__n_groups)(__max_cu));
 
-    auto __n_iter = (__rng_n - 1) / (__n_groups * __wgroup_size) + 1;
-
     _PRINT_INFO_IN_DEBUG_MODE(__exec, __wgroup_size, __max_cu);
+
+    const auto __n_iter = oneapi::dpl::__internal::__dpl_ceiling_div(__rng_n, __n_groups * __wgroup_size);
 
     _AtomicType __result = 0;
 
     const oneapi::dpl::__par_backend_hetero::__early_exit_find_any<_ExecutionPolicy, _Brick> __pred{__f};
 
-    // scope is to copy data back to __result after destruction of temporary sycl:buffer
+    const _RngSize __rng_portion_size = std::min(__rng_n, _RngSize(__n_groups * __wgroup_size));
+    for (_RngSize __processed_items_count = 0; __processed_items_count < __rng_n;
+         __processed_items_count += __rng_portion_size)
     {
-        sycl::buffer<_AtomicType, 1> __result_buf(&__result, 1); // temporary storage for global atomic
+        // take_view_simple, drop_view_simple
+        auto __rng_not_processed = oneapi::dpl::__ranges::drop_view_simple(__rng, __processed_items_count);
+        auto __rng_portion = oneapi::dpl::__ranges::take_view_simple(__rng_not_processed, std::min(__rng_not_processed.size(), __rng_portion_size));
 
-        // main parallel_for
-        __exec.queue().submit([&](sycl::handler& __cgh) {
-            oneapi::dpl::__ranges::__require_access(__cgh, __rng);
-            auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
+        // scope is to copy data back to __result after destruction of temporary sycl:buffer
+        {
+            sycl::buffer<_AtomicType, 1> __result_buf(&__result, 1); // temporary storage for global atomic
 
-            __cgh.parallel_for_work_group<_FindAnyKernel>(
-                sycl::range</*dim=*/1>(__n_groups),    // Number of work groups
-                sycl::range</*dim=*/1>(__wgroup_size), // The size of each work group
-                [=](sycl::group</*dim=*/1> __group) {
+            // main parallel_for
+            __exec.queue().submit([&](sycl::handler& __cgh) {
+                oneapi::dpl::__ranges::__require_access(__cgh, __rng_portion);
+                auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
 
-                    bool __found_in_any_item_inside_group = false;
+                __cgh.parallel_for_work_group<_FindAnyKernel>(
+                    sycl::range</*dim=*/1>(__n_groups),    // Number of work groups
+                    sycl::range</*dim=*/1>(__wgroup_size), // The size of each work group
+                    [=](sycl::group</*dim=*/1> __group) {
+                        bool __found_in_any_item_inside_group = false;
 
-                    const std::size_t __group_idx = __group.get_group_id(0);
+                        const std::size_t __group_idx = __group.get_group_id(0);
 
-                    // process all work-items in our group
-                    __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
+                        // process all work-items in our group
+                        __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
+                            const std::size_t __local_idx = __item.get_local_id(0);
 
-                        const std::size_t __local_idx = __item.get_local_id(0);
+                            if (!__found_in_any_item_inside_group &&
+                                __pred(__group_idx, __local_idx, __wgroup_size, __rng_portion))
+                            {
+                                __found_in_any_item_inside_group = true;
+                            }
+                        });
 
-                        if (!__found_in_any_item_inside_group &&
-                            __pred(__group_idx, __local_idx, __n_iter, __wgroup_size, __rng))
+                        if (__found_in_any_item_inside_group)
                         {
-                            __found_in_any_item_inside_group = true;
+                            __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
+                                *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
+
+                            __found.store(1);
                         }
                     });
+            });
+            //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
+        }
 
-                    if (__found_in_any_item_inside_group)
-                    {
-                        __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
-                            *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
-
-                        __found.store(1);
-                    }
-                });
-        });
-        //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
+        if (__result != 0)
+            break;
     }
 
     return __result != 0;
