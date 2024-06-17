@@ -1097,11 +1097,10 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     bool __found_in_any_item_inside_group = false;
 
-                    const std::size_t __group_idx = __group.get_group_id(0);
-
                     // process all work-items in our group
                     __group.parallel_for_work_item([&](sycl::h_item</*dim=*/1> __item) {
 
+                        const std::size_t __group_idx = __group.get_group_id(0);
                         const std::size_t __local_idx = __item.get_local_id(0);
 
                         if (!__found_in_any_item_inside_group &&
