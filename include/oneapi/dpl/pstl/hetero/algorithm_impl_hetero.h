@@ -563,7 +563,7 @@ __pattern_adjacent_find(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _I
         return __last;
 
     using _Predicate =
-        oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, adjacent_find_fn<_BinaryPredicate>>;
+        oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, _BinaryPredicate>;
 
     auto __keep1 = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _Iterator>();
     auto __buf1 = __keep1(__first, __last - 1);
@@ -574,8 +574,8 @@ __pattern_adjacent_find(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _I
     // __par_backend_hetero::make_wrapped_policy<__par_backend_hetero::__or_policy_wrapper>()
     bool result = __par_backend_hetero::__parallel_find_or(
         _BackendTag{}, ::std::forward<_ExecutionPolicy>(__exec),
-        _Predicate{adjacent_find_fn<_BinaryPredicate>{__predicate}}, __par_backend_hetero::__parallel_or_tag{},
-        oneapi::dpl::__ranges::make_zip_view(__buf1.all_view(), __buf2.all_view()));
+        _Predicate{__predicate}, __par_backend_hetero::__parallel_or_tag{},
+        __buf1.all_view(), __buf2.all_view());
 
     // inverted conditional because of
     // reorder_predicate in glue_algorithm_impl.h
@@ -711,7 +711,7 @@ __pattern_equal(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _Iterator1
     return !__par_backend_hetero::__parallel_find_or(
         _BackendTag{}, ::std::forward<_ExecutionPolicy>(__exec), _Predicate{equal_predicate<_Pred>{__pred}},
         __par_backend_hetero::__parallel_or_tag{},
-        oneapi::dpl::__ranges::make_zip_view(__buf1.all_view(), __buf2.all_view()));
+        __buf1.all_view(), __buf2.all_view());
 }
 
 //------------------------------------------------------------------------

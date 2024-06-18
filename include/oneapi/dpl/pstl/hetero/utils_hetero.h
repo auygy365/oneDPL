@@ -40,6 +40,13 @@ struct equal_predicate
         using ::std::get;
         return !__pred(get<0>(__val), get<1>(__val));
     }
+
+    template <typename Arg1, typename Arg2>
+    bool
+    operator()(const Arg1& arg1, const Arg2& arg2) const
+    {
+        return !__pred(arg1, arg2);
+    }
 };
 
 template <typename _Predicate>

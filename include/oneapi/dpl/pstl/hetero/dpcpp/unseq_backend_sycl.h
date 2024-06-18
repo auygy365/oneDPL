@@ -424,6 +424,13 @@ struct single_match_pred_by_idx
     {
         return __pred(__shifted_idx, __acc);
     }
+
+    template <typename ...Args>
+    bool
+    operator()(Args&&... args) const
+    {
+        return __pred(std::forward<Args>(args)...);
+    }
 };
 
 template <typename _ExecutionPolicy, typename _Pred>

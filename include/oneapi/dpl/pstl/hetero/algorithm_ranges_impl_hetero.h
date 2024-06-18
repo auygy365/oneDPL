@@ -108,7 +108,7 @@ __pattern_equal(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _Range1&& 
     return !oneapi::dpl::__par_backend_hetero::__parallel_find_or(
         _BackendTag{}, ::std::forward<_ExecutionPolicy>(__exec), _Predicate{equal_predicate<_Pred>{__pred}},
         oneapi::dpl::__par_backend_hetero::__parallel_or_tag{},
-        oneapi::dpl::__ranges::zip_view(::std::forward<_Range1>(__rng1), ::std::forward<_Range2>(__rng2)));
+        std::forward<_Range1>(__rng1), std::forward<_Range2>(__rng2));
 }
 
 //------------------------------------------------------------------------
@@ -291,7 +291,7 @@ __pattern_adjacent_find(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _R
         return __rng.size();
 
     using _Predicate =
-        oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, adjacent_find_fn<_BinaryPredicate>>;
+        oneapi::dpl::unseq_backend::single_match_pred<_ExecutionPolicy, _BinaryPredicate>;
     using _TagType = ::std::conditional_t<__is__or_semantic(), oneapi::dpl::__par_backend_hetero::__parallel_or_tag,
                                           oneapi::dpl::__par_backend_hetero::__parallel_find_forward_tag<_Range>>;
 
@@ -302,8 +302,8 @@ __pattern_adjacent_find(__hetero_tag<_BackendTag>, _ExecutionPolicy&& __exec, _R
     // __par_backend_hetero::make_wrapped_policy<__par_backend_hetero::__or_policy_wrapper>()
     auto result = oneapi::dpl::__par_backend_hetero::__parallel_find_or(
         _BackendTag{}, ::std::forward<_ExecutionPolicy>(__exec),
-        _Predicate{adjacent_find_fn<_BinaryPredicate>{__predicate}}, _TagType{},
-        oneapi::dpl::__ranges::zip_view(__rng1, __rng2));
+        _Predicate{__predicate}, _TagType{},
+        __rng1, __rng2);
 
     // inverted conditional because of
     // reorder_predicate in glue_algorithm_impl.h
