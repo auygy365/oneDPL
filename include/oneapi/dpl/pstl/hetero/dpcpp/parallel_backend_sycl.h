@@ -1089,7 +1089,7 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
         // main parallel_for
         __exec.queue().submit([&](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
-            auto __result_buf_acc = __result_buf.template get_access<access_mode::read_write>(__cgh);
+            auto __result_buf_acc = __result_buf.template get_access<access_mode::write>(__cgh);
 
 #if _ONEDPL_COMPILE_KERNEL && _ONEDPL_KERNEL_BUNDLE_PRESENT
             __cgh.use_kernel_bundle(__kernel.get_kernel_bundle());
@@ -1110,7 +1110,7 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     bool __found_somewhere = __pred(__item_id, __n_iter, __wgroup_size, __rngs...);
 
-                    if (__found.load() == 0 && __dpl_sycl ::__any_of_group(__group, __found_somewhere == true))
+                    if (__dpl_sycl ::__any_of_group(__group, __found_somewhere == true))
                         __found.store(1);
                 });
         });
