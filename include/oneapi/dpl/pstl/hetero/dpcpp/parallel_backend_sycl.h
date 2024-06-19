@@ -1123,8 +1123,6 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                 });
         });
         //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
-
-        // 2.	Barrier Semantics: While the SYCL specification does not explicitly state that sycl::any_of_group acts as a barrier, the requirement that all work-items in the group must participate implies a barrier-like synchronization poin
     }
 
     return __result != 0;
