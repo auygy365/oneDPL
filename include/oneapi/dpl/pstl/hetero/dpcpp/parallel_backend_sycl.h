@@ -1039,7 +1039,7 @@ struct __early_exit_find_any
 
             __found_somewhere |= __shifted_idx < __n && __pred(__shifted_idx, __rngs...);
 
-            if (__i > 0 && __i % 20 == 0 && __dpl_sycl::__any_of_group(__group, __found_somewhere == true))
+            if (__i > 0 && __i % 1000 == 0 && __dpl_sycl::__any_of_group(__group, __found_somewhere == true))
                 break;
         }
     }
