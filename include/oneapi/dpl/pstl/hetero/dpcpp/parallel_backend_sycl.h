@@ -1035,7 +1035,8 @@ struct __early_exit_find_any
             __shift = __wg_size - __leader;
         for (_IterSize __i = 0; __i < __n_iter; ++__i)
         {
-            if (__dpl_sycl::__any_of_group(__subgroup, __found_in_current_subgroup == true))
+            // Checking any __found_in_current_subgroup inside the current sub-group every 10 iterations
+            if (__i > 0 && __i % 10 == 0 && __dpl_sycl::__any_of_group(__subgroup, __found_in_current_subgroup == true))
                 return false;
 
             const auto __shifted_idx = __init_index + __i * __shift;
