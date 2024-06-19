@@ -1013,14 +1013,17 @@ struct __early_exit_find_any
     _Pred __pred;
 
     template <typename _NDItemId, typename _IterSize, typename _WgSize, typename... _Ranges>
-    bool
-    operator()(const _NDItemId __item_id, const _IterSize __n_iter, const _WgSize __wg_size, _Ranges&&... __rngs) const
+    void
+    operator()(const _NDItemId __nd_item, const _IterSize __n_iter, const _WgSize __wg_size, bool& __found_somewhere,
+               _Ranges&&... __rngs) const
     {
         const auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
 
         std::size_t __shift = 16;
-        const std::size_t __local_idx = __item_id.get_local_id(0);
-        const std::size_t __group_idx = __item_id.get_group(0);
+        const std::size_t __local_idx = __nd_item.get_local_id(0);
+        const std::size_t __group_idx = __nd_item.get_group(0);
+
+        auto __group = __nd_item.get_group();
 
         // each work_item processes N_ELEMENTS with step SHIFT
         const std::size_t __leader = (__local_idx / __shift) * __shift;
@@ -1035,12 +1038,11 @@ struct __early_exit_find_any
             const auto __shifted_idx = __init_index + __i * __shift;
 
             if (__shifted_idx < __n && __pred(__shifted_idx, __rngs...))
-            {
-                return true;
-            }
-        }
+                __found_somewhere = true;
 
-        return false;
+            if (__dpl_sycl::__any_of_group(__group, __found_somewhere == true))
+                break;
+        }
     }
 };
 
@@ -1075,6 +1077,9 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
     __n_groups = ::std::min(__n_groups, decltype(__n_groups)(__max_cu));
 
     auto __n_iter = (__rng_n - 1) / (__n_groups * __wgroup_size) + 1;
+    using _NIterType = decltype(__n_iter);
+
+    constexpr _NIterType __check_early_exit_iters_count = 10;
 
     _PRINT_INFO_IN_DEBUG_MODE(__exec, __wgroup_size, __max_cu);
 
@@ -1100,16 +1105,17 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 #endif
                 sycl::nd_range</*dim=*/1>(sycl::range</*dim=*/1>(__n_groups * __wgroup_size),
                                           sycl::range</*dim=*/1>(__wgroup_size)),
-                [=](sycl::nd_item</*dim=*/1> __item_id) {
+                [=](sycl::nd_item</*dim=*/1> __nd_item) {
 
-                    auto __group = __item_id.get_group();
+                    auto __group = __nd_item.get_group();
 
-                    bool __found_somewhere = __pred(__item_id, __n_iter, __wgroup_size, __rngs...);
+                    bool __found_somewhere = false;
+                    __pred(__nd_item, __n_iter, __wgroup_size, __found_somewhere, __rngs...);
 
                     /// If we found something in any work-item, we need to set the global atomic to 1
                     if (__dpl_sycl::__any_of_group(__group, __found_somewhere == true))
                     {
-                        const auto __local_idx = __item_id.get_local_id(0);
+                        const auto __local_idx = __nd_item.get_local_id(0);
 
                         // ...and doing it only once from the first work-item
                         if (__local_idx == 0)
