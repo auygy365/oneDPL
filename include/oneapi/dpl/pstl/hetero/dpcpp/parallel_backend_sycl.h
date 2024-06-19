@@ -1037,10 +1037,9 @@ struct __early_exit_find_any
         {
             const auto __shifted_idx = __init_index + __i * __shift;
 
-            if (__shifted_idx < __n && __pred(__shifted_idx, __rngs...))
-                __found_somewhere = true;
+            __found_somewhere |= __shifted_idx < __n && __pred(__shifted_idx, __rngs...);
 
-            if (__dpl_sycl::__any_of_group(__group, __found_somewhere == true))
+            if (__i > 0 && __i % 10 == 0 && __dpl_sycl::__any_of_group(__group, __found_somewhere == true))
                 break;
         }
     }
