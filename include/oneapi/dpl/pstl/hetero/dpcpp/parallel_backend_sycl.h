@@ -1102,18 +1102,24 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
                                           sycl::range</*dim=*/1>(__wgroup_size)),
                 [=](sycl::nd_item</*dim=*/1> __item_id) {
 
-                    __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
-                        *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
-
                     auto __group = __item_id.get_group();
-                    const auto __local_idx = __item_id.get_local_id(0);
 
                     bool __found_somewhere = __pred(__item_id, __n_iter, __wgroup_size, __rngs...);
 
-                    __dpl_sycl::__group_barrier(__item_id);
+                    /// If we found something in any work-item, we need to set the global atomic to 1
+                    if (__dpl_sycl::__any_of_group(__group, __found_somewhere == true))
+                    {
+                        const auto __local_idx = __item_id.get_local_id(0);
 
-                    if (__dpl_sycl ::__any_of_group(__group, __found_somewhere == true) && __local_idx == 0)
-                        __found.store(1);
+                        // ...and doing it only once from the first work-item
+                        if (__local_idx == 0)
+                        {
+                            __dpl_sycl::__atomic_ref<_AtomicType, sycl::access::address_space::global_space> __found(
+                                *__dpl_sycl::__get_accessor_ptr(__result_buf_acc));
+
+                            __found.store(1);
+                        }
+                    }
                 });
         });
         //The end of the scope  -  a point of synchronization (on temporary sycl buffer destruction)
