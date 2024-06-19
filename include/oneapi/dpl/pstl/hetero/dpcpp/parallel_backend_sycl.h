@@ -1014,13 +1014,16 @@ struct __early_exit_find_any
 
     template <typename _NDItemId, typename _IterSize, typename _WgSize, typename... _Ranges>
     bool
-    operator()(const _NDItemId __item_id, const _IterSize __n_iter, const _WgSize __wg_size, _Ranges&&... __rngs) const
+    operator()(const _NDItemId __item_id, const _IterSize __n_iter, const _WgSize __wg_size,
+               bool& __found_in_current_subgroup, _Ranges&&... __rngs) const
     {
         const auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
 
         std::size_t __shift = 16;
         const std::size_t __local_idx = __item_id.get_local_id(0);
         const std::size_t __group_idx = __item_id.get_group(0);
+        
+        const auto __subgroup = __item_id.get_sub_group();
 
         // each work_item processes N_ELEMENTS with step SHIFT
         const std::size_t __leader = (__local_idx / __shift) * __shift;
@@ -1032,10 +1035,14 @@ struct __early_exit_find_any
             __shift = __wg_size - __leader;
         for (_IterSize __i = 0; __i < __n_iter; ++__i)
         {
+            if (__dpl_sycl::__any_of_group(__subgroup, __found_in_current_subgroup == true))
+                return false;
+
             const auto __shifted_idx = __init_index + __i * __shift;
 
             if (__shifted_idx < __n && __pred(__shifted_idx, __rngs...))
             {
+                __found_in_current_subgroup = true;
                 return true;
             }
         }
@@ -1104,7 +1111,8 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     auto __group = __item_id.get_group();
 
-                    bool __found_somewhere = __pred(__item_id, __n_iter, __wgroup_size, __rngs...);
+                    bool __found_in_current_subgroup = false;
+                    bool __found_somewhere = __pred(__item_id, __n_iter, __wgroup_size, __found_in_current_subgroup, __rngs...);
 
                     /// If we found something in any work-item, we need to set the global atomic to 1
                     if (__dpl_sycl::__any_of_group(__group, __found_somewhere == true))
