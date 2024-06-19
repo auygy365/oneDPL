@@ -1112,7 +1112,7 @@ __parallel_find_any(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPol
 
                     __dpl_sycl::__group_barrier(__item_id);
 
-                    if (__dpl_sycl ::__any_of_group(__group, __found_somewhere == true))
+                    if (__dpl_sycl ::__any_of_group(__group, __found_somewhere == true) && __local_idx == 0)
                         __found.store(1);
                 });
         });
