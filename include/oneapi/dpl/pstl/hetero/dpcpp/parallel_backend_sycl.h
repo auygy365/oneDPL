@@ -1184,6 +1184,10 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
 
     auto __pred = oneapi::dpl::__par_backend_hetero::__early_exit_find_or<_ExecutionPolicy, _Brick>{__f};
 
+    using _ReduceOp = typename _BrickTag::FoundLocalReduceOp;
+    // Setup _HasKnownIdentity to false tp avoid using of __dpl_sycl::__reduce_over_group inside reduce_over_group
+    unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _AtomicType, std::false_type> __reduce_pattern{_ReduceOp{}};
+
     // scope is to copy data back to __result after destruction of temporary sycl:buffer
     {
         sycl::buffer<_AtomicType, 1> __result_sycl_buf(&__result, 1); // temporary storage for global atomic
@@ -1192,6 +1196,9 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
         __exec.queue().submit([&](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
             auto __result_sycl_buf_acc = __result_sycl_buf.template get_access<access_mode::read_write>(__cgh);
+
+            std::size_t __local_mem_size = __reduce_pattern.local_mem_req(__wgroup_size);
+            __dpl_sycl::__local_accessor<_AtomicType> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
 
 #if _ONEDPL_COMPILE_KERNEL && _ONEDPL_KERNEL_BUNDLE_PRESENT
             __cgh.use_kernel_bundle(__kernel.get_kernel_bundle());
@@ -1215,8 +1222,7 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
                     // find __dpl_sycl::__maximum (for the __parallel_find_backward_tag)
                     // or calculate the sum with __dpl_sycl::__plus (for the __parallel_or_tag)
                     // inside all our group items
-                    __found_local = __dpl_sycl::__reduce_over_group(__item_id.get_group(), __found_local,
-                                                                    typename _BrickTag::FoundLocalReduceOp{});
+                    __found_local = __reduce_pattern(__item_id, __rng_n, __found_local, __temp_local);
 
                     // Set local found state value value to global atomic
                     if (__local_idx == 0 && __found_local != __init_value)

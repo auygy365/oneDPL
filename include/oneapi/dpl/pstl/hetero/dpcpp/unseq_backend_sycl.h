@@ -348,7 +348,8 @@ struct transform_reduce
 // Reduce local reductions of each work item to a single reduced element per work group. The local reductions are held
 // in local memory. sycl::reduce_over_group is used for supported data types and operations. All other operations are
 // processed in order and without a known identity.
-template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp>
+template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp,
+          typename _HasKnownIdentity = __has_known_identity<_BinaryOperation1, _Tp>>
 struct reduce_over_group
 {
     _BinaryOperation1 __bin_op1;
@@ -391,7 +392,7 @@ struct reduce_over_group
     _Tp
     operator()(const _NDItemId __item_id, const _Size __n, const _Tp& __val, const _AccLocal& __local_mem) const
     {
-        return reduce_impl(__item_id, __n, __val, __local_mem, __has_known_identity<_BinaryOperation1, _Tp>{});
+        return reduce_impl(__item_id, __n, __val, __local_mem, _HasKnownIdentity{});
     }
 
     template <typename _InitType, typename _Result>
@@ -404,7 +405,7 @@ struct reduce_over_group
     inline std::size_t
     local_mem_req(const std::uint16_t& __work_group_size) const
     {
-        if constexpr (__has_known_identity<_BinaryOperation1, _Tp>{})
+        if constexpr (_HasKnownIdentity{})
             return 0;
 
         return __work_group_size;

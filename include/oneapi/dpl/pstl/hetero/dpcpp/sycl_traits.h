@@ -258,7 +258,7 @@ template <typename _ExecutionPolicy, typename _Operation1, typename _Operation2,
           std::uint8_t _VecSize>
 struct transform_reduce;
 
-template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp>
+template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp, typename _HasKnownIdentity>
 struct reduce_over_group;
 
 template <typename _ExecutionPolicy, typename _Pred>
