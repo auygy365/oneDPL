@@ -1192,6 +1192,7 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
         __exec.queue().submit([&](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...);
             auto __result_sycl_buf_acc = __result_sycl_buf.template get_access<access_mode::read_write>(__cgh);
+            __dpl_sycl::__local_accessor<_AtomicType> __temp_local(__wgroup_size, __cgh);
 
 #if _ONEDPL_COMPILE_KERNEL && _ONEDPL_KERNEL_BUNDLE_PRESENT
             __cgh.use_kernel_bundle(__kernel.get_kernel_bundle());
@@ -1215,8 +1216,21 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
                     // find __dpl_sycl::__maximum (for the __parallel_find_backward_tag)
                     // or calculate the sum with __dpl_sycl::__plus (for the __parallel_or_tag)
                     // inside all our group items
-                    __found_local = __dpl_sycl::__reduce_over_group(__item_id.get_group(), __found_local,
-                                                                    typename _BrickTag::FoundLocalReduceOp{});
+                    __temp_local[__local_idx] = __found_local;
+                    __dpl_sycl::__group_barrier(__item_id);
+
+                    auto __bin_op1 = typename _BrickTag::FoundLocalReduceOp{};
+                    for (std::uint32_t __power_2 = 1; __power_2 < __wgroup_size; __power_2 *= 2)
+                    {
+                        __dpl_sycl::__group_barrier(__item_id);
+                        if ((__local_idx & (2 * __power_2 - 1)) == 0 && __local_idx + __power_2 < __wgroup_size)
+                        {
+                            __temp_local[__local_idx] =
+                                __bin_op1(__temp_local[__local_idx], __temp_local[__local_idx + __power_2]);
+                        }
+                    }
+
+                    __found_local = __temp_local[__local_idx];
 
                     // Set local found state value value to global atomic
                     if (__local_idx == 0 && __found_local != __init_value)
