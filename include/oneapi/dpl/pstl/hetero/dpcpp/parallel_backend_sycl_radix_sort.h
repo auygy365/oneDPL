@@ -340,7 +340,6 @@ enum class __peer_prefix_algo
 template <typename _OffsetT, __peer_prefix_algo _Algo>
 struct __peer_prefix_helper;
 
-#if (_ONEDPL_LIBSYCL_VERSION >= 50700)
 template <typename _OffsetT>
 struct __peer_prefix_helper<_OffsetT, __peer_prefix_algo::atomic_fetch_or>
 {
@@ -377,7 +376,6 @@ struct __peer_prefix_helper<_OffsetT, __peer_prefix_algo::atomic_fetch_or>
         return __sg_total_offset;
     }
 };
-#endif // (_ONEDPL_LIBSYCL_VERSION >= 50700)
 
 template <typename _OffsetT>
 struct __peer_prefix_helper<_OffsetT, __peer_prefix_algo::scan_then_broadcast>
@@ -712,10 +710,8 @@ struct __parallel_radix_sort_iteration
         {
 #if _ONEDPL_SYCL_SUB_GROUP_MASK_PRESENT
             constexpr auto __peer_algorithm = __peer_prefix_algo::subgroup_ballot;
-#elif _ONEDPL_LIBSYCL_VERSION >= 50700
-            constexpr auto __peer_algorithm = __peer_prefix_algo::atomic_fetch_or;
 #else
-            constexpr auto __peer_algorithm = __peer_prefix_algo::scan_then_broadcast;
+            constexpr auto __peer_algorithm = __peer_prefix_algo::atomic_fetch_or;
 #endif // _ONEDPL_SYCL_SUB_GROUP_MASK_PRESENT
 
             __reorder_event =
