@@ -318,6 +318,7 @@ struct __parallel_scan_submitter<_CustomName, __internal::__optional_kernel_name
         // TODO: find a way to generalize getting of reliable work-group sizes
         ::std::size_t __wgroup_size = oneapi::dpl::__internal::__slm_adjusted_work_group_size(__exec, sizeof(_Type));
         // Limit the work-group size to prevent large sizes on CPUs. Empirically found value.
+        // This value matches the current practical limit for GPUs, but may need to be re-evaluated in the future.
         __wgroup_size = std::min(__wgroup_size, (std::size_t)1024);
 
 #if _ONEDPL_COMPILE_KERNEL
@@ -1171,6 +1172,7 @@ __parallel_find_or(oneapi::dpl::__internal::__device_backend_tag, _ExecutionPoli
 
     // TODO: find a way to generalize getting of reliable work-group size
     // Limit the work-group size to prevent large sizes on CPUs. Empirically found value.
+    // This value exceeds the current practical limit for GPUs, but may need to be re-evaluated in the future.
     std::size_t __wgroup_size = oneapi::dpl::__internal::__max_work_group_size(__exec, (std::size_t)4096);
 #if _ONEDPL_COMPILE_KERNEL
     auto __kernel = __internal::__kernel_compiler<_FindOrKernel>::__compile(__exec);
